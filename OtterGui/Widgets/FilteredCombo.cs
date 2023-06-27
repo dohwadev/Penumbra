@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Interface;
+using Dalamud.Logging;
 using ImGuiNET;
 using OtterGui.Classes;
 using OtterGui.Raii;
@@ -9,6 +10,9 @@ namespace OtterGui.Widgets;
 
 public abstract class FilterComboBase<T>
 {
+    private readonly HashSet<uint> _popupState = new();
+
+
     public readonly IReadOnlyList<T> Items;
 
     private LowerString _filter = LowerString.Empty;
@@ -29,8 +33,13 @@ public abstract class FilterComboBase<T>
         _available   = _keepStorage ? new List<int>(Items.Count) : new List<int>();
     }
 
-    private void ClearStorage()
+    private void ClearStorage(string label)
     {
+        PluginLog.Verbose("Cleaning up Filter Combo Cache for {Label}.", label);
+        _filter        = LowerString.Empty;
+        _lastSelection = -1;
+        Cleanup();
+
         if (_keepStorage)
             return;
 
@@ -56,25 +65,36 @@ public abstract class FilterComboBase<T>
     protected virtual void Cleanup()
     { }
 
-    protected virtual void DrawCombo(string label, string preview, int currentSelected, float previewWidth, float itemHeight,
+    protected virtual void DrawCombo(string label, string preview, string tooltip, int currentSelected, float previewWidth, float itemHeight,
         ImGuiComboFlags flags)
     {
         ImGui.SetNextItemWidth(previewWidth);
-        using var combo       = ImRaii.Combo(label, preview, flags | ImGuiComboFlags.HeightLarge);
-        var       deactivated = ImGui.IsItemDeactivated();
+        var       id    = ImGui.GetID(label);
+        using var combo = ImRaii.Combo(label, preview, flags | ImGuiComboFlags.HeightLarge);
+        ImGuiUtil.HoverTooltip(tooltip);
         if (combo)
         {
+            _popupState.Add(id);
             UpdateFilter();
+
             // Width of the popup window and text input field.
             var width = GetFilterWidth();
 
             DrawFilter(currentSelected, width);
             DrawKeyboardNavigation();
             DrawList(width, itemHeight);
-            ClosePopup();
+            ClosePopup(id, label);
         }
-        else
-            Cleanup();
+        else if (_popupState.Remove(id))
+        {
+            ClearStorage(label);
+        }
+    }
+
+    protected virtual int UpdateCurrentSelected(int currentSelected)
+    {
+        _lastSelection = currentSelected;
+        return currentSelected;
     }
 
     protected virtual void DrawFilter(int currentSelected, float width)
@@ -84,8 +104,9 @@ public abstract class FilterComboBase<T>
         // scroll to it, and set keyboard focus to the filter field.
         if (ImGui.IsWindowAppearing())
         {
-            _lastSelection = _available.IndexOf(currentSelected);
-            _setScroll     = true;
+            currentSelected = UpdateCurrentSelected(currentSelected);
+            _lastSelection  = _available.IndexOf(currentSelected);
+            _setScroll      = true;
             ImGui.SetKeyboardFocusHere();
         }
 
@@ -152,24 +173,22 @@ public abstract class FilterComboBase<T>
         }
     }
 
-    protected void ClosePopup()
+    protected void ClosePopup(uint id, string label)
     {
         if (!_closePopup)
             return;
 
         // Close the popup and reset state.
-        _filter        = LowerString.Empty;
-        _lastSelection = -1;
         ImGui.CloseCurrentPopup();
-        ClearStorage();
-        Cleanup();
+        _popupState.Remove(id);
+        ClearStorage(label);
     }
 
     // Basic Draw.
-    public virtual bool Draw(string label, string preview, ref int currentSelection, float previewWidth, float itemHeight,
+    public virtual bool Draw(string label, string preview, string tooltip, ref int currentSelection, float previewWidth, float itemHeight,
         ImGuiComboFlags flags = ImGuiComboFlags.None)
     {
-        DrawCombo(label, preview, currentSelection, previewWidth, itemHeight, flags);
+        DrawCombo(label, preview, tooltip, currentSelection, previewWidth, itemHeight, flags);
         if (NewSelection == null)
             return false;
 

@@ -22,18 +22,26 @@ public partial class FileSystem<T> where T : class
     public delegate void         ChangeDelegate(FileSystemChangeType type, IPath changedObject, IPath? previousParent, IPath? newParent);
     public event ChangeDelegate? Changed;
 
-    private readonly NameComparer _nameComparer;
-    public           Folder       Root      = Folder.CreateRoot();
-    public           uint         IdCounter = 1;
+    private readonly NameComparer      _nameComparer;
+    private readonly IComparer<string> _stringComparer;
+    public           Folder            Root      = Folder.CreateRoot();
+    public           uint              IdCounter = 1;
 
     // The string comparer passed will be used to compare the names of siblings.
     // If none is supplied, they will be compared with OrdinalIgnoreCase.
     public FileSystem(IComparer<string>? comparer = null)
-        => _nameComparer = new NameComparer(comparer ?? StringComparer.OrdinalIgnoreCase);
+    {
+        _stringComparer = comparer ?? StringComparer.OrdinalIgnoreCase;
+        _nameComparer   = new NameComparer(_stringComparer);
+    }
 
     // Find a child-index inside a folder using the given comparer.
     private int Search(Folder parent, string name)
         => parent.Children.BinarySearch((SearchPath)name, _nameComparer);
+
+    /// <summary> Check if two paths compare equal completely. </summary>
+    public bool Equal(string lhs, string rhs)
+        => _stringComparer.Compare(lhs, rhs) == 0;
 
     // Find a specific child by its path from Root.
     // Returns true if the folder was found, and false if not.
@@ -84,7 +92,7 @@ public partial class FileSystem<T> where T : class
         if (SetChild(parent, folder, out var idx) == Result.ItemExists)
             throw new Exception($"Could not add folder {folder.Name} to {parent.FullName()}: Child of that name already exists.");
 
-        Changed?.Invoke(FileSystemChangeType.LeafAdded, folder, null, parent);
+        Changed?.Invoke(FileSystemChangeType.FolderAdded, folder, null, parent);
         return (folder, idx);
     }
 
@@ -223,6 +231,7 @@ public partial class FileSystem<T> where T : class
     // Throws if from is Root.
     // If all children can be moved, from is deleted.
     // If some children can not be moved, from and the unmoved children are kept where they are.
+    // Throws if no children could be moved at all.
     public void Merge(Folder from, Folder to)
     {
         switch (MergeFolders(from, to))
@@ -235,6 +244,8 @@ public partial class FileSystem<T> where T : class
             case Result.PartialSuccess:
                 Changed?.Invoke(FileSystemChangeType.PartialMerge, from, from, to);
                 return;
+            case Result.NoSuccess: 
+                throw new Exception($"Could not merge {from.FullName()} into {to.FullName()} because all children already existed in the target.");
         }
     }
 }

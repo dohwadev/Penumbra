@@ -33,7 +33,7 @@ public partial class ActorManager
             case IdentifierType.Retainer:
             {
                 var name = ByteString.FromStringUnsafe(data[nameof(ActorIdentifier.PlayerName)]?.ToObject<string>(), false);
-                return CreateRetainer(name);
+                return CreateRetainer(name, 0);
             }
             case IdentifierType.Owned:
             {
@@ -45,7 +45,7 @@ public partial class ActorManager
             }
             case IdentifierType.Special:
             {
-                var special = data[nameof(ActorIdentifier.Special)]?.ToObject<SpecialActor>() ?? 0;
+                var special = data[nameof(ActorIdentifier.Special)]?.ToObject<ScreenActor>() ?? 0;
                 return CreateSpecial(special);
             }
             case IdentifierType.Npc:
@@ -97,7 +97,7 @@ public partial class ActorManager
         if (main == null)
             return null;
 
-        if (main->ObjectIndex is >= (ushort)SpecialActor.CutsceneStart and < (ushort)SpecialActor.CutsceneEnd)
+        if (main->ObjectIndex is >= (ushort)ScreenActor.CutsceneStart and < (ushort)ScreenActor.CutsceneEnd)
         {
             var parentIdx = _toParentIdx(main->ObjectIndex);
             if (parentIdx >= 0)
@@ -123,18 +123,18 @@ public partial class ActorManager
         if (split.Length < 2)
             throw new IdentifierParseError($"The identifier string {userString} does not contain a type and a value.");
 
-        var    type       = IdentifierType.Invalid;
-        var    playerName = ByteString.Empty;
-        ushort worldId    = 0;
-        var    kind       = ObjectKind.Player;
-        var    objectId   = 0u;
+        IdentifierType type;
+        var            playerName = ByteString.Empty;
+        ushort         worldId    = 0;
+        var            kind       = ObjectKind.Player;
+        var            objectId   = 0u;
 
         (ByteString, ushort) ParsePlayer(string player)
         {
             var parts = player.Split('@', 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             if (!VerifyPlayerName(parts[0]))
                 throw new IdentifierParseError($"{parts[0]} is not a valid player name.");
-            if (!ByteString.FromString(parts[0], out var p, false))
+            if (!ByteString.FromString(parts[0], out var p))
                 throw new IdentifierParseError($"The player string {parts[0]} contains invalid symbols.");
 
             var world = parts.Length == 2
@@ -197,8 +197,7 @@ public partial class ActorManager
                     return FindDataId(split[1], Data.BNpcs, out id)
                         ? (ObjectKind.BattleNpc, id)
                         : throw new IdentifierParseError($"Could not identify a Battle NPC named {split[1]}.");
-                default:
-                    throw new IdentifierParseError($"The argument {split[0]} is not a valid NPC Type.");
+                default: throw new IdentifierParseError($"The argument {split[0]} is not a valid NPC Type.");
             }
         }
 
@@ -214,7 +213,7 @@ public partial class ActorManager
                 type = IdentifierType.Retainer;
                 if (!VerifyRetainerName(split[1]))
                     throw new IdentifierParseError($"{split[1]} is not a valid player name.");
-                if (!ByteString.FromString(split[1], out playerName, false))
+                if (!ByteString.FromString(split[1], out playerName))
                     throw new IdentifierParseError($"The retainer string {split[1]} contains invalid symbols.");
 
                 break;
@@ -228,6 +227,7 @@ public partial class ActorManager
                 if (split.Length < 3)
                     throw new IdentifierParseError(
                         "Owned NPCs need a NPC and a player, separated by '|', but only one was provided.");
+
                 type                  = IdentifierType.Owned;
                 (kind, objectId)      = ParseNpc(split[1]);
                 (playerName, worldId) = ParsePlayer(split[2]);
@@ -244,7 +244,7 @@ public partial class ActorManager
     /// Compute an ActorIdentifier from a GameObject. If check is true, the values are checked for validity.
     /// </summary>
     public unsafe ActorIdentifier FromObject(FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* actor,
-        out FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* owner, bool allowPlayerNpc, bool check)
+        out FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* owner, bool allowPlayerNpc, bool check, bool withoutIndex)
     {
         owner = null;
         if (actor == null)
@@ -252,7 +252,7 @@ public partial class ActorManager
 
         actor = HandleCutscene(actor);
         var idx = actor->ObjectIndex;
-        if (idx is >= (ushort)SpecialActor.CharacterScreen and <= (ushort)SpecialActor.Portrait)
+        if (idx is >= (ushort)ScreenActor.CharacterScreen and <= (ushort)ScreenActor.Card8)
             return CreateIndividualUnchecked(IdentifierType.Special, ByteString.Empty, idx, ObjectKind.None, uint.MaxValue);
 
         var kind = (ObjectKind)actor->ObjectKind;
@@ -298,36 +298,39 @@ public partial class ActorManager
                     }
                 }
 
+                var index = withoutIndex ? ushort.MaxValue : actor->ObjectIndex;
                 return check
-                    ? CreateNpc(ObjectKind.BattleNpc, nameId, actor->ObjectIndex)
-                    : CreateIndividualUnchecked(IdentifierType.Npc, ByteString.Empty, actor->ObjectIndex, ObjectKind.BattleNpc, nameId);
+                    ? CreateNpc(ObjectKind.BattleNpc, nameId, index)
+                    : CreateIndividualUnchecked(IdentifierType.Npc, ByteString.Empty, index, ObjectKind.BattleNpc, nameId);
             }
             case ObjectKind.EventNpc:
             {
                 var dataId = actor->DataID;
                 // Special case for squadron that is also in the game functions, cf. E8 ?? ?? ?? ?? 89 87 ?? ?? ?? ?? 4C 89 BF
-                if (dataId == 0xf845d)
+                if (dataId == 0xF845D)
                     dataId = actor->GetNpcID();
                 if (MannequinIds.Contains(dataId))
                 {
                     static ByteString Get(byte* ptr)
                         => ptr == null ? ByteString.Empty : new ByteString(ptr);
 
-                    var actualName   = Get(actor->GetName());
                     var retainerName = Get(actor->Name);
+                    var actualName   = _framework.IsInFrameworkUpdateThread ? Get(actor->GetName()) : ByteString.Empty;
                     if (!actualName.Equals(retainerName))
                     {
                         var ident = check
-                            ? CreateRetainer(retainerName)
-                            : CreateIndividualUnchecked(IdentifierType.Retainer, retainerName, actor->ObjectIndex, ObjectKind.EventNpc, dataId);
+                            ? CreateRetainer(retainerName, ActorIdentifier.RetainerType.Mannequin)
+                            : CreateIndividualUnchecked(IdentifierType.Retainer, retainerName, (ushort)ActorIdentifier.RetainerType.Mannequin,
+                                ObjectKind.EventNpc,                             dataId);
                         if (ident.IsValid)
                             return ident;
                     }
                 }
 
+                var index = withoutIndex ? ushort.MaxValue : actor->ObjectIndex;
                 return check
-                    ? CreateNpc(ObjectKind.EventNpc, dataId, actor->ObjectIndex)
-                    : CreateIndividualUnchecked(IdentifierType.Npc, ByteString.Empty, actor->ObjectIndex, ObjectKind.EventNpc, dataId);
+                    ? CreateNpc(ObjectKind.EventNpc, dataId, index)
+                    : CreateIndividualUnchecked(IdentifierType.Npc, ByteString.Empty, index, ObjectKind.EventNpc, dataId);
             }
             case ObjectKind.MountType:
             case ObjectKind.Companion:
@@ -338,7 +341,7 @@ public partial class ActorManager
                 if (owner == null)
                     return ActorIdentifier.Invalid;
 
-                var dataId    = GetCompanionId(actor, owner);
+                var dataId    = GetCompanionId(actor, (Character*)owner);
                 var name      = new ByteString(owner->Name);
                 var homeWorld = ((Character*)owner)->HomeWorld;
                 return check
@@ -349,13 +352,14 @@ public partial class ActorManager
             {
                 var name = new ByteString(actor->Name);
                 return check
-                    ? CreateRetainer(name)
-                    : CreateIndividualUnchecked(IdentifierType.Retainer, name, 0, ObjectKind.None, uint.MaxValue);
+                    ? CreateRetainer(name, ActorIdentifier.RetainerType.Bell)
+                    : CreateIndividualUnchecked(IdentifierType.Retainer, name, (ushort)ActorIdentifier.RetainerType.Bell, ObjectKind.None,
+                        uint.MaxValue);
             }
             default:
             {
                 var name  = new ByteString(actor->Name);
-                var index = actor->ObjectIndex;
+                var index = withoutIndex ? ushort.MaxValue : actor->ObjectIndex;
                 return CreateIndividualUnchecked(IdentifierType.UnkObject, name, index, ObjectKind.None, 0);
             }
         }
@@ -365,32 +369,32 @@ public partial class ActorManager
     /// Obtain the current companion ID for an object by its actor and owner.
     /// </summary>
     private unsafe uint GetCompanionId(FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* actor,
-        FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* owner) // TODO: CS Update
+        Character* owner) // TODO: CS Update
     {
         return (ObjectKind)actor->ObjectKind switch
         {
-            ObjectKind.MountType => *(ushort*)((byte*)owner + 0x650 + 0x18),
-            (ObjectKind)15       => *(ushort*)((byte*)owner + 0x860 + 0x18),
-            ObjectKind.Companion => *(ushort*)((byte*)actor + 0x1AAC),
+            ObjectKind.MountType => owner->Mount.MountId,
+            (ObjectKind)15       => owner->Ornament.OrnamentId,
+            ObjectKind.Companion => actor->DataID,
             _                    => actor->DataID,
         };
     }
 
     public unsafe ActorIdentifier FromObject(GameObject? actor, out FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject* owner,
-        bool allowPlayerNpc, bool check)
+        bool allowPlayerNpc, bool check, bool withoutIndex)
         => FromObject((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)(actor?.Address ?? IntPtr.Zero), out owner, allowPlayerNpc,
-            check);
+            check, withoutIndex);
 
-    public unsafe ActorIdentifier FromObject(GameObject? actor, bool allowPlayerNpc, bool check)
-        => FromObject(actor, out _, allowPlayerNpc, check);
+    public unsafe ActorIdentifier FromObject(GameObject? actor, bool allowPlayerNpc, bool check, bool withoutIndex)
+        => FromObject(actor, out _, allowPlayerNpc, check, withoutIndex);
 
     public ActorIdentifier CreateIndividual(IdentifierType type, ByteString name, ushort homeWorld, ObjectKind kind, uint dataId)
         => type switch
         {
             IdentifierType.Player    => CreatePlayer(name, homeWorld),
-            IdentifierType.Retainer  => CreateRetainer(name),
+            IdentifierType.Retainer  => CreateRetainer(name, (ActorIdentifier.RetainerType)homeWorld),
             IdentifierType.Owned     => CreateOwned(name, homeWorld, kind, dataId),
-            IdentifierType.Special   => CreateSpecial((SpecialActor)homeWorld),
+            IdentifierType.Special   => CreateSpecial((ScreenActor)homeWorld),
             IdentifierType.Npc       => CreateNpc(kind, dataId, homeWorld),
             IdentifierType.UnkObject => CreateIndividualUnchecked(IdentifierType.UnkObject, name, homeWorld, ObjectKind.None, 0),
             _                        => ActorIdentifier.Invalid,
@@ -410,15 +414,15 @@ public partial class ActorManager
         return new ActorIdentifier(IdentifierType.Player, ObjectKind.Player, homeWorld, 0, name);
     }
 
-    public ActorIdentifier CreateRetainer(ByteString name)
+    public ActorIdentifier CreateRetainer(ByteString name, ActorIdentifier.RetainerType type)
     {
         if (!VerifyRetainerName(name.Span))
             return ActorIdentifier.Invalid;
 
-        return new ActorIdentifier(IdentifierType.Retainer, ObjectKind.Retainer, 0, 0, name);
+        return new ActorIdentifier(IdentifierType.Retainer, ObjectKind.Retainer, (ushort)type, 0, name);
     }
 
-    public ActorIdentifier CreateSpecial(SpecialActor actor)
+    public ActorIdentifier CreateSpecial(ScreenActor actor)
     {
         if (!VerifySpecial(actor))
             return ActorIdentifier.Invalid;
@@ -446,32 +450,30 @@ public partial class ActorManager
     public static bool VerifyPlayerName(ReadOnlySpan<byte> name)
     {
         // Total no more than 20 characters + space.
-        if (name.Length is < 5 or > 27)
+        if (name.Length is < 5 or > 21)
             return false;
 
-        //// Forename and surname, no more spaces.
-        //var splitIndex = name.IndexOf((byte)' ');
-        //if (splitIndex < 0 || name[(splitIndex + 1)..].IndexOf((byte)' ') >= 0)
-        //    return false;
+        // Forename and surname, no more spaces.
+        var splitIndex = name.IndexOf((byte)' ');
+        if (splitIndex < 0 || name[(splitIndex + 1)..].IndexOf((byte)' ') >= 0)
+            return false;
 
-        //return CheckNamePart(name[..splitIndex], 2, 15) && CheckNamePart(name[(splitIndex + 1)..], 2, 15);
-        return CheckNamePart(name[0..], 2, 15);
+        return CheckNamePart(name[..splitIndex], 2, 15) && CheckNamePart(name[(splitIndex + 1)..], 2, 15);
     }
 
     /// <summary> Checks SE naming rules. </summary>
     public static bool VerifyPlayerName(ReadOnlySpan<char> name)
     {
         // Total no more than 20 characters + space.
-        if (name.Length is < 5 or > 27)
+        if (name.Length is < 5 or > 21)
             return false;
 
-        //// Forename and surname, no more spaces.
-        //var splitIndex = name.IndexOf(' ');
-        //if (splitIndex < 0 || name[(splitIndex + 1)..].IndexOf(' ') >= 0)
-        //    return false;
+        // Forename and surname, no more spaces.
+        var splitIndex = name.IndexOf(' ');
+        if (splitIndex < 0 || name[(splitIndex + 1)..].IndexOf(' ') >= 0)
+            return false;
 
-        //return CheckNamePart(name[..splitIndex], 2, 15) && CheckNamePart(name[(splitIndex + 1)..], 2, 15);
-        return CheckNamePart(name[0..], 2, 15);
+        return CheckNamePart(name[..splitIndex], 2, 15) && CheckNamePart(name[(splitIndex + 1)..], 2, 15);
     }
 
     /// <summary> Checks SE naming rules. </summary>
@@ -484,60 +486,60 @@ public partial class ActorManager
 
     private static bool CheckNamePart(ReadOnlySpan<char> part, int minLength, int maxLength)
     {
-        //// Each name part at least 2 and at most 15 characters for players, and at least 3 and at most 20 characters for retainers.
-        //if (part.Length < minLength || part.Length > maxLength)
-        //    return false;
+        // Each name part at least 2 and at most 15 characters for players, and at least 3 and at most 20 characters for retainers.
+        if (part.Length < minLength || part.Length > maxLength)
+            return false;
 
-        //// Each part starting with capitalized letter.
-        //if (part[0] is < 'A' or > 'Z')
-        //    return false;
+        // Each part starting with capitalized letter.
+        if (part[0] is < 'A' or > 'Z')
+            return false;
 
-        //// Every other symbol needs to be lowercase letter, hyphen or apostrophe.
-        //var last = '\0';
-        //for (var i = 1; i < part.Length; ++i)
-        //{
-        //    var current = part[i];
-        //    if (current is not ('\'' or '-' or (>= 'a' and <= 'z')))
-        //        return false;
+        // Every other symbol needs to be lowercase letter, hyphen or apostrophe.
+        var last = '\0';
+        for (var i = 1; i < part.Length; ++i)
+        {
+            var current = part[i];
+            if (current is not ('\'' or '-' or (>= 'a' and <= 'z')))
+                return false;
 
-        //    // Hyphens can not be used in succession, after or before apostrophes or as the last symbol.
-        //    if (last is '\'' && current is '-')
-        //        return false;
-        //    if (last is '-' && current is '-' or '\'')
-        //        return false;
+            // Hyphens can not be used in succession, after or before apostrophes or as the last symbol.
+            if (last is '\'' && current is '-')
+                return false;
+            if (last is '-' && current is '-' or '\'')
+                return false;
 
-        //    last = current;
-        //}
+            last = current;
+        }
 
         return true;
     }
 
     private static bool CheckNamePart(ReadOnlySpan<byte> part, int minLength, int maxLength)
     {
-        //// Each name part at least 2 and at most 15 characters for players, and at least 3 and at most 20 characters for retainers.
-        //if (part.Length < minLength || part.Length > maxLength)
-        //    return false;
+        // Each name part at least 2 and at most 15 characters for players, and at least 3 and at most 20 characters for retainers.
+        if (part.Length < minLength || part.Length > maxLength)
+            return false;
 
-        //// Each part starting with capitalized letter.
-        //if (part[0] is < (byte)'A' or > (byte)'Z')
-        //    return false;
+        // Each part starting with capitalized letter.
+        if (part[0] is < (byte)'A' or > (byte)'Z')
+            return false;
 
-        //// Every other symbol needs to be lowercase letter, hyphen or apostrophe.
-        //var last = (byte)'\0';
-        //for (var i = 1; i < part.Length; ++i)
-        //{
-        //    var current = part[i];
-        //    if (current is not ((byte)'\'' or (byte)'-' or (>= (byte)'a' and <= (byte)'z')))
-        //        return false;
+        // Every other symbol needs to be lowercase letter, hyphen or apostrophe.
+        var last = (byte)'\0';
+        for (var i = 1; i < part.Length; ++i)
+        {
+            var current = part[i];
+            if (current is not ((byte)'\'' or (byte)'-' or (>= (byte)'a' and <= (byte)'z')))
+                return false;
 
-        //    // Hyphens can not be used in succession, after or before apostrophes or as the last symbol.
-        //    if (last is (byte)'\'' && current is (byte)'-')
-        //        return false;
-        //    if (last is (byte)'-' && current is (byte)'-' or (byte)'\'')
-        //        return false;
+            // Hyphens can not be used in succession, after or before apostrophes or as the last symbol.
+            if (last is (byte)'\'' && current is (byte)'-')
+                return false;
+            if (last is (byte)'-' && current is (byte)'-' or (byte)'\'')
+                return false;
 
-        //    last = current;
-        //}
+            last = current;
+        }
 
         return true;
     }
@@ -547,18 +549,18 @@ public partial class ActorManager
         => worldId == ushort.MaxValue || Data.Worlds.ContainsKey(worldId);
 
     /// <summary> Verify that the enum value is a specific actor and return the name if it is. </summary>
-    public static bool VerifySpecial(SpecialActor actor)
-        => actor is >= SpecialActor.CharacterScreen and <= SpecialActor.Portrait;
+    public static bool VerifySpecial(ScreenActor actor)
+        => actor is >= ScreenActor.CharacterScreen and <= ScreenActor.Card8;
 
     /// <summary> Verify that the object index is a valid index for an NPC. </summary>
-    public static bool VerifyIndex(ushort index)
+    public bool VerifyIndex(ushort index)
     {
         return index switch
         {
-            ushort.MaxValue                 => true,
-            < 200                           => index % 2 == 0,
-            > (ushort)SpecialActor.Portrait => index < 426,
-            _                               => false,
+            ushort.MaxValue             => true,
+            < 200                       => index % 2 == 0,
+            > (ushort)ScreenActor.Card8 => index < _objects.Length,
+            _                           => false,
         };
     }
 

@@ -114,6 +114,22 @@ public static partial class ImGuiUtil
         drawList.AddText(position, foregroundColor, text);
     }
 
+    /// <summary> Draw a group of texts with colors without additional spacing between them in the same line. </summary>
+    public static void DrawColoredText(params (string, uint)[] data)
+    {
+        using var style = ImRaii.PushStyle(ImGuiStyleVar.ItemSpacing, Vector2.Zero);
+        foreach (var (text, color) in data)
+        {
+            if (color == 0)
+                ImGui.TextUnformatted(text);
+            else
+                TextColored(color, text);
+            ImGui.SameLine();
+        }
+
+        ImGui.NewLine();
+    }
+
 
     // Go to the next column, then enter text.
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
@@ -406,9 +422,9 @@ public static partial class ImGuiUtil
             ImGui.CloseCurrentPopup();
 
         ImGui.SetNextItemWidth(300 * ImGuiHelpers.GlobalScale);
-        var enterPressed = ImGui.InputTextWithHint("##newName", "Enter New Name...", ref newName, 64, ImGuiInputTextFlags.EnterReturnsTrue);
         if (ImGui.IsWindowAppearing())
             ImGui.SetKeyboardFocusHere();
+        var enterPressed = ImGui.InputTextWithHint("##newName", "Enter New Name...", ref newName, 512, ImGuiInputTextFlags.EnterReturnsTrue);
 
         if (!enterPressed)
             return false;
@@ -436,6 +452,17 @@ public static partial class ImGuiUtil
         ImGui.Dummy(size);
     }
 
+
+    /// <summary>
+    /// Input an ushort.
+    /// </summary>
+    public static unsafe bool InputUInt16(string label, ref ushort v, ImGuiInputTextFlags flags)
+    {
+        fixed (ushort* v2 = &v)
+        {
+            return ImGui.InputScalar(label, ImGuiDataType.U16, (nint)v2, IntPtr.Zero, IntPtr.Zero, "%hu", flags);
+        }
+    }
 
     /// <summary>
     /// Computes the intensity of a RGB color without taking into consideration alpha values.

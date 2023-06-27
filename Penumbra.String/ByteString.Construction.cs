@@ -11,7 +11,7 @@ public sealed unsafe partial class ByteString : IDisposable
     /// <returns> 67108863 </returns>
     public const int MaxLength = (int)FlagMask;
 
-    // statically allocated null-terminator for empty strings to point to.
+    /// <summary> Statically allocated null-terminator for empty strings to point to. </summary>
     private static readonly ByteStringFunctions.NullTerminator Null = new();
 
     /// <summary> An empty string of length 0 that is null-terminated. </summary>
@@ -37,8 +37,17 @@ public sealed unsafe partial class ByteString : IDisposable
     /// <remarks> This computes CRC, checks for ASCII and AsciiLower and assumes Null-Termination. </remarks>
     public ByteString(byte* path)
     {
-        var length = ByteStringFunctions.ComputeCrc32AsciiLowerAndSize(path, out var crc32, out var lower, out var ascii);
-        Setup(path, length, crc32, true, false, lower, ascii);
+        if (path == null)
+        {
+            _path   =  Null.NullBytePtr;
+            _length |= AsciiCheckedFlag | AsciiFlag | AsciiLowerCheckedFlag | AsciiLowerFlag | NullTerminatedFlag | AsciiFlag;
+            _crc32  =  0;
+        }
+        else
+        {
+            var length = ByteStringFunctions.ComputeCrc32AsciiLowerAndSize(path, out var crc32, out var lower, out var ascii);
+            Setup(path, length, crc32, true, false, lower, ascii);
+        }
     }
 
     /// <summary>
@@ -128,6 +137,7 @@ public sealed unsafe partial class ByteString : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    /// <summary> Automatic release of memory if not disposed before. </summary>
     ~ByteString()
     {
         ReleaseUnmanagedResources();
@@ -139,7 +149,7 @@ public sealed unsafe partial class ByteString : IDisposable
     internal ByteString Setup(byte* path, int length, int? crc32, bool isNullTerminated, bool isOwned,
         bool? isLower = null, bool? isAscii = null)
     {
-        if (length > FlagMask)
+        if (length > MaxLength)
             throw new ArgumentOutOfRangeException(nameof(length));
 
         _path   = path;

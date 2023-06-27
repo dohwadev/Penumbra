@@ -60,6 +60,21 @@ public interface IPenumbraApi : IPenumbraApiBase
     /// <returns><inheritdoc cref="ChangedItemClick"/></returns>
     public event ChangedItemClick? ChangedItemClicked;
 
+    /// <summary>
+    /// Open the Penumbra main config window.
+    /// </summary>
+    /// <param name="tab">Open the window at a specific tab. Use TabType.None to not change the tab. </param>
+    /// <param name="modDirectory">Select a mod specified via its directory name in the mod tab, empty if none.</param>
+    /// <param name="modName">Select a mod specified via its mod name in the mod tab, empty if none.</param>
+    /// <returns>InvalidArgument if <paramref name="tab"/> is invalid,
+    /// ModMissing if <paramref name="modDirectory"/> or <paramref name="modName"/> are set non-empty and the mod does not exist,
+    /// Success otherwise.</returns>
+    /// <remarks>If <paramref name="tab"/> is not TabType.Mods, the mod will not be selected regardless of other parameters and ModMissing will not be returned.</remarks>
+    public PenumbraApiEc OpenMainWindow( TabType tab, string modDirectory, string modName );
+
+    /// <summary> Close the Penumbra main config window. </summary>
+    public void CloseMainWindow();
+
     #endregion
 
     #region Redrawing
@@ -193,6 +208,15 @@ public interface IPenumbraApi : IPenumbraApiBase
     public string[] ReverseResolvePlayerPath( string moddedPath );
 
     /// <summary>
+    /// Resolve all game paths in <paramref name="forward"/> and reserve all paths in <paramref name="reverse"/> at once.
+    /// </summary>
+    /// <param name="forward">Paths to forward-resolve.</param>
+    /// <param name="reverse">Paths to reverse-resolve.</param>
+    /// <returns>A pair of an array of forward-resolved single paths of the same length as <paramref name="forward"/> and an array of arrays of reverse-resolved paths.
+    /// The outer array has the same length as <paramref name="reverse"/> while each inner array can have arbitrary length.</returns>
+    public (string[], string[][]) ResolvePlayerPaths( string[] forward, string[] reverse );
+
+    /// <summary>
     /// Try to load a given <paramref name="gamePath" /> with the resolved path from Penumbras Base collection.
     /// </summary>
     /// <returns>The file of type T if successful, null otherwise.</returns>
@@ -227,6 +251,44 @@ public interface IPenumbraApi : IPenumbraApiBase
     /// <returns>A dictionary of affected items in <paramref name="collectionName"/> via name and known objects or null.</returns>
     public IReadOnlyDictionary< string, object? > GetChangedItemsForCollection( string collectionName );
 
+    /// <returns>The name of the collection assigned to the given <paramref name="type"/> or an empty string if none is assigned or type is invalid.</returns>
+    public string GetCollectionForType( ApiCollectionType type );
+
+    /// <summary>
+    /// Set a collection by name for a specific type.
+    /// </summary>
+    /// <param name="type">The collection type to set.</param>
+    /// <param name="collectionName">The name of the collection to set it to.</param>
+    /// <param name="allowCreateNew">Allow only setting existing types or also creating an unset type.</param>
+    /// <param name="allowDelete">Allow deleting existing collections if <paramref name="collectionName"/> is empty.</param>
+    /// <returns>InvalidArgument if type is invalid,
+    /// NothingChanged if the new collection is the same as the old,<br />
+    /// AssignmentDeletionDisallowed if <paramref name="collectionName"/> is empty and <paramref name="allowDelete"/> is false, and the assignment exists,<br />
+    /// or if Default, Current or Interface would be deleted.<br />
+    /// CollectionMissing if the new collection can not be found,<br />
+    /// AssignmentCreationDisallowed if <paramref name="allowCreateNew"/> is false and the assignment does not exist,<br />
+    /// or Success, as well as the name of the previous collection (empty if no assignment existed).
+    /// </returns>
+    public (PenumbraApiEc, string OldCollection) SetCollectionForType( ApiCollectionType type, string collectionName, bool allowCreateNew, bool allowDelete );
+
+    /// <returns>Return whether the object at <paramref name="gameObjectIdx" /> produces a valid identifier, if the identifier has a collection assigned, and the collection that affects the object.</returns>
+    public (bool ObjectValid, bool IndividualSet, string EffectiveCollection) GetCollectionForObject( int gameObjectIdx );
+
+    /// <summary>
+    /// Set a collection by name for a specific game object.
+    /// </summary>
+    /// <param name="gameObjectIdx">The index of the desired game object in the object table.</param>
+    /// <param name="collectionName">The name of the collection to set it to.</param>
+    /// <param name="allowCreateNew">Allow only setting existing individuals or also creating a new individual assignment.</param>
+    /// <param name="allowDelete">Allow deleting existing individual assignments if <paramref name="collectionName"/> is empty.</param>
+    /// <returns>InvalidIdentifier if <paramref name="gameObjectIdx"/> does not produce an existing game object or the object is not indentifiable,
+    /// NothingChanged if the new collection is the same as the old,<br />
+    /// AssignmentDeletionDisallowed if <paramref name="collectionName"/> is empty and <paramref name="allowDelete"/> is false, and the assignment exists,<br />
+    /// CollectionMissing if the new collection can not be found,<br />
+    /// AssignmentCreationDisallowed if <paramref name="allowCreateNew"/> is false and the assignment does not exist,<br />
+    /// or Success, as well as the name of the previous collection (empty if no assignment existed).</returns>
+    public (PenumbraApiEc, string OldCollection) SetCollectionForObject( int gameObjectIdx, string collectionName, bool allowCreateNew, bool allowDelete );
+
     #endregion
 
     #region Meta
@@ -250,6 +312,11 @@ public interface IPenumbraApi : IPenumbraApiBase
     /// <returns>A list of all installed mods. The first string is their directory name, the second string is their mod name.</returns>
     public IList< (string, string) > GetModList();
 
+    /// <summary> Try to unpack and install a valid mod file (.pmp, .ttmp, .ttmp2) as if installed manually. </summary>
+    /// <param name="path">The file that should be unpacked.</param>
+    /// <returns>Success, MissingFile. Success does not indicate successful installing, just successful queueing for install.</returns>
+    public PenumbraApiEc InstallMod( string path );
+
     /// <summary> Try to reload an existing mod given by its <paramref name="modDirectory" /> name or <paramref name="modName" />.</summary>
     /// <remarks>Reload is the same as if triggered by button press and might delete the mod if it is not valid anymore.</remarks>
     /// <returns>ModMissing if the mod can not be found or Success</returns>
@@ -272,11 +339,11 @@ public interface IPenumbraApi : IPenumbraApiBase
 
     /// <summary> Triggers whenever a mod is deleted. </summary>
     /// <returns>The base directory name of the new mod.</returns>
-    public event Action<string>? ModAdded;
+    public event Action< string >? ModAdded;
 
     /// <summary> Triggers whenever a mods base name is changed from inside Penumbra. </summary>
     /// <returns>The previous base directory name of the mod and the new base directory name of the mod.</returns>
-    public event Action<string, string>? ModMoved;
+    public event Action< string, string >? ModMoved;
 
     /// <summary>
     /// Get the internal full filesystem path including search order for the specified mod
@@ -380,7 +447,7 @@ public interface IPenumbraApi : IPenumbraApiBase
     /// <param name="collectionName">The chosen collection assigned to the actor.</param>
     /// <param name="actorIndex">The current object table index of the actor.</param>
     /// <param name="forceAssignment">Whether to assign even if the actor is already assigned either a temporary or a permanent collection.</param>
-    /// <returns>Success, InvalidArgument if the actor can not be identified, CollectionMissing if the collection does not exist, CharacterCollectionExists if <paramref name="forceAssignment"/> is false and the actor is already assigned a collection. </returns>
+    /// <returns>Success, InvalidArgument if the actor can not be identified, CollectionMissing if the collection does not exist, CharacterCollectionExists if <paramref name="forceAssignment"/> is false and the actor is already assigned a collection, and AssignmentDeletionFailed if <paramref name="forceAssignment"/> is true and the existing temporary assignment could not be deleted. </returns>
     public PenumbraApiEc AssignTemporaryCollection( string collectionName, int actorIndex, bool forceAssignment );
 
     /// <summary>

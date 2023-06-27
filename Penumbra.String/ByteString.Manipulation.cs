@@ -13,12 +13,16 @@ public sealed unsafe partial class ByteString
     /// Create a C# UTF16 string from this string.
     /// </summary>
     public override string ToString()
-        => Length == 0
-            ? string.Empty
-            : (_length & AsciiFlag) != 0
-                // If the string is known to be pure ASCII, use that encoding, otherwise UTF8.
-                ? Encoding.ASCII.GetString(_path, Length)
-                : Encoding.UTF8.GetString(_path, Length);
+    {
+        if (Length == 0)
+            return string.Empty;
+
+        // If the string is known to be pure ASCII, use that encoding, otherwise UTF8.
+        if ((_length & AsciiFlag) != 0)
+            return Encoding.ASCII.GetString(_path, Length);
+
+        return Encoding.UTF8.GetString(_path, Length);
+    }
 
 
     /// <summary> Convert the ASCII portion of the string to lowercase. </summary>
@@ -98,6 +102,50 @@ public sealed unsafe partial class ByteString
             : Substring(from);
     }
 
+    /// <summary> Trim all ascii whitespace characters from the front. </summary>
+    public ByteString TrimFront()
+    {
+        if (IsEmpty)
+            return Empty;
+
+        var ptr = _path;
+        var end = _path + Length;
+        while (*ptr < 0x7F && char.IsWhiteSpace((char)*ptr) && ptr++ < end)
+        { }
+
+        if (ptr == _path)
+            return this;
+
+        if (ptr == end)
+            return Empty;
+
+        return FromByteStringUnsafe(ptr, (int)(end - ptr), IsNullTerminated, IsAsciiLowerInternal, IsAsciiInternal);
+    }
+
+    /// <summary> Trim all ascii whitespace characters at the end. </summary>
+    public ByteString TrimEnd()
+    {
+        if (IsEmpty)
+            return Empty;
+
+        var ptr = _path + Length - 1;
+        var end = _path;
+        while (*ptr < 0x7F && char.IsWhiteSpace((char)*ptr) && ptr-- >= end)
+        { }
+
+        if (ptr == _path + Length - 1)
+            return this;
+
+        if (ptr < end)
+            return Empty;
+
+        return FromByteStringUnsafe(_path, (int)(ptr - _path), false, IsAsciiLowerInternal, IsAsciiInternal);
+    }
+
+    /// <summary> Trim all ascii whitespace characters from the beginning or end of the string. </summary>
+    public ByteString Trim()
+        => TrimFront().TrimEnd();
+
     /// <summary>
     /// Create a owned copy of the string and replace all occurrences of from with to in it.
     /// </summary>
@@ -144,9 +192,7 @@ public sealed unsafe partial class ByteString
     /// <summary>
     /// Join a number of strings with a given byte between them.
     /// </summary>
-    /// <param name="splitter">The byte to insert between all strings.</param>
     /// <param name="strings">The list of strings to join.</param>
-    /// <remarks>No <paramref name="splitter"/> is inserted before the first or after the last string.</remarks>
     public static ByteString Join(params ByteString[] strings)
     {
         var length = strings.Sum(s => s.Length);

@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -17,8 +18,8 @@ public class PerformanceTracker<T> : IDisposable where T : unmanaged, Enum
     public           long      TotalFrames { get; private set; }
 
     private readonly Monitor[] _monitors =
-#if DEBUG
-        Enum.GetValues< T >().Select( e => new Monitor() ).Append( new Monitor() ).ToArray();
+#if PROFILING
+        Enum.GetValues<T>().Select(e => new Monitor()).Append(new Monitor()).ToArray();
 #else
         Array.Empty<Monitor>();
 #endif
@@ -110,7 +111,7 @@ public class PerformanceTracker<T> : IDisposable where T : unmanaged, Enum
         => _framework = framework;
 
 
-    public struct TimingStopper : IDisposable
+    public readonly struct TimingStopper : IDisposable
     {
         private readonly Stopwatch _watch;
 
@@ -126,9 +127,9 @@ public class PerformanceTracker<T> : IDisposable where T : unmanaged, Enum
             => _watch.Stop();
     }
 
-#if DEBUG
-    [MethodImpl( MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization )]
-    public TimingStopper Measure( T timingType )
+#if PROFILING
+    [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+    public TimingStopper Measure(T timingType)
         => new(this, timingType);
 #else
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
@@ -136,17 +137,17 @@ public class PerformanceTracker<T> : IDisposable where T : unmanaged, Enum
         => null;
 #endif
 
-    [Conditional("DEBUG")]
+    [Conditional("PROFILING")]
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
     public void Start(T timingType)
         => _monitors[Unsafe.As<T, int>(ref timingType)].Stopwatch.Value!.Start();
 
-    [Conditional("DEBUG")]
+    [Conditional("PROFILING")]
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
     public void Stop(T timingType)
         => _monitors[Unsafe.As<T, int>(ref timingType)].Stopwatch.Value!.Stop();
 
-    [Conditional("DEBUG")]
+    [Conditional("PROFILING")]
     public void Enable()
     {
         if (Enabled)
@@ -163,7 +164,7 @@ public class PerformanceTracker<T> : IDisposable where T : unmanaged, Enum
         });
     }
 
-    [Conditional("DEBUG")]
+    [Conditional("PROFILING")]
     public void Disable()
     {
         if (!Enabled)
@@ -173,7 +174,7 @@ public class PerformanceTracker<T> : IDisposable where T : unmanaged, Enum
         Enabled           =  false;
     }
 
-    [Conditional("DEBUG")]
+    [Conditional("PROFILING")]
     public void Draw(string label, string textBox, Func<T, string> toNames)
     {
         using var id      = ImRaii.PushId(label);
@@ -196,10 +197,10 @@ public class PerformanceTracker<T> : IDisposable where T : unmanaged, Enum
                 var value = frames * 1000.0 / Stopwatch.Frequency;
                 var text = value switch
                 {
-                    > 3600000 => $"{value / 3600000:F4} h",
-                    > 60000   => $"{value / 60000:F4} min",
-                    > 1000    => $"{value / 1000:F4} s",
-                    _         => $"{value:F4} ms",
+                    > 3600000 => $"{(value / 3600000).ToString("F4", CultureInfo.InvariantCulture)} h",
+                    > 60000   => $"{(value / 60000).ToString("F4", CultureInfo.InvariantCulture)} min",
+                    > 1000    => $"{(value / 1000).ToString("F4", CultureInfo.InvariantCulture)} s",
+                    _         => $"{value.ToString("F4", CultureInfo.InvariantCulture)} ms",
                 };
                 ImGuiUtil.RightAlign(text);
             }
