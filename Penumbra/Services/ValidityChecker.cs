@@ -10,9 +10,9 @@ namespace Penumbra.Services;
 
 public class ValidityChecker
 {
-    public const string Repository          = "https://raw.githubusercontent.com/dohwadev/Penumbra/master/repo.json";
-    public const string RepositoryLower     = "https://raw.githubusercontent.com/dohwadev/penumbra/master/repo.json";
-    public const string TestRepositoryLower = "https://raw.githubusercontent.com/dohwadev/penumbra/test/repo.json";
+    public const string Repository          = "https://raw.githubusercontent.com/dohwadev/Penumbra/main/repo.json";
+    public const string RepositoryLower     = "https://raw.githubusercontent.com/dohwadev/penumbra/main/repo.json";
+    public const string TestRepositoryLower = "https://raw.githubusercontent.com/dohwadev/penumbra/main/repo.json";
 
     public readonly bool DevPenumbraExists;
     public readonly bool IsNotInstalledPenumbra;
